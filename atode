@@ -1,0 +1,99 @@
+#!/usr/bin/env ruby
+
+STACK_FILE = "#{ENV['HOME']}/.atode"
+
+
+require 'optparse'
+
+def file_open(opt, lock = nil, &block)
+	File.open(STACK_FILE, opt | File::CREAT) {|io|
+		if lock
+			io.flock(lock)
+		end
+		block.call(io)
+	}
+end
+
+def list(args)
+	file_open(File::RDONLY, File::LOCK_SH) {|io|
+		io.each_with_index {|line, i|
+			puts "##{i}".ljust(4) + line
+		}
+	}
+end
+
+def push(args)
+	return list(args) if args.empty?
+	file_open(File::WRONLY | File::APPEND, File::LOCK_EX) {|io|
+		msg = args.join(' ')
+		io.puts "#{Time.now.strftime("%Y-%m-%d %H:%M:%S")}  #{msg}"
+		puts "TODO:  #{msg}"
+	}
+end
+
+def pop(args)
+	file_open(File::RDWR, File::LOCK_EX) {|io|
+		lines = io.readlines
+		if args.empty?
+			msg = lines.last
+			if msg
+				io.truncate io.stat.size - msg.length
+				puts "done:  #{msg}"
+			end
+		else
+			if msg = lines.delete_at( args.shift.to_i )
+				io.truncate 0
+				io.rewind
+				io.write lines.join('')
+				puts "done:  #{msg}"
+			end
+		end
+	}
+end
+
+def pending(args)
+	file_open(File::RDWR, File::LOCK_EX) {|io|
+		lines = io.readlines
+		msg = lines.pop
+		lines.unshift msg
+		io.truncate 0
+		io.rewind
+		io.write lines.join('')
+		puts "pending:  #{msg}"
+	}
+end
+
+
+op = OptionParser.new
+
+action = :push
+
+op.banner =<<END
+Usage: atode TODO
+       atode [option]
+END
+
+op.separator("option")
+
+op.on('-l', "List TODOs") {|a|
+	action = :list
+}
+
+op.on('-k', "Pop latest TODO") {|a|
+	action = :pop
+}
+
+op.on('-z', "Pending latest TODO") {|a|
+	action = :pending
+}
+
+
+(class<<self;self;end).module_eval {
+	define_method(:usage) {
+		puts op.to_s
+	}
+}
+
+op.parse!(ARGV)
+__send__ action, ARGV
+
